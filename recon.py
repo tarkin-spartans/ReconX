@@ -22,38 +22,6 @@ SENSITIVE_PATTERNS = {
 def clean_filename(target):
     return target.replace(".", "_").replace("/", "_")
 
-# Function to fetch subdomains and save to file
-def scan_subdomains(target):
-    print(f"[*] Fetching subdomains for: {target}")
-    sources = {
-        "crt.sh": f"https://crt.sh/?q={target}&output=json",
-        "VirusTotal": f"https://www.virustotal.com/api/v3/domains/{target}/subdomains",
-    }
-    
-    subdomains = set()
-    
-    for name, url in sources.items():
-        try:
-            response = requests.get(url, headers=HEADERS, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                if name == "crt.sh":
-                    subdomains.update([entry["name_value"] for entry in data])
-                elif name == "VirusTotal":
-                    subdomains.update([entry["id"] for entry in data["data"]])
-            print(f"[+] {name}: {len(subdomains)} subdomains found")
-        except Exception as e:
-            print(f"[-] Error fetching from {name}: {e}")
-    
-    # Save subdomains to a file
-    subdomains_file = f"{clean_filename(target)}_subs.txt"
-    with open(subdomains_file, "w") as file:
-        for sub in subdomains:
-            file.write(sub + "\n")
-    
-    print(f"[+] Subdomains saved to: {subdomains_file}")
-    return list(subdomains)
-
 # Function to fetch URLs from different sources and save them
 def scan_urls(target):
     print(f"[*] Fetching URLs for: {target}")
@@ -87,20 +55,23 @@ def scan_urls(target):
     print(f"[+] All URLs saved to: {urls_file}")
     return list(urls)
 
-# Function to extract JavaScript & JSON files
-def extract_js_json(urls, target):
-    js_json_files = set()
+# Function to extract JavaScript, JSON, and sensitive files
+def extract_sensitive_files(urls, target):
+    file_patterns = r'https?://\S+\.(js|json|zip|tar|db|bak)'
+    sensitive_files = set()
+
     for url in urls:
-        matches = re.findall(r'https?://\S+\.js|https?://\S+\.json', url)
-        js_json_files.update(matches)
+        matches = re.findall(file_patterns, url)
+        if matches:
+            sensitive_files.add(url)
 
-    js_json_file = f"{clean_filename(target)}_jsfiles.txt"
-    with open(js_json_file, "w") as file:
-        for js_url in js_json_files:
-            file.write(js_url + "\n")
+    sensitive_files_file = f"{clean_filename(target)}_sensitive_files.txt"
+    with open(sensitive_files_file, "w") as file:
+        for file_url in sensitive_files:
+            file.write(file_url + "\n")
 
-    print(f"[+] Extracted JS/JSON files saved to: {js_json_file}")
-    return list(js_json_files)
+    print(f"[+] Extracted sensitive files saved to: {sensitive_files_file}")
+    return list(sensitive_files)
 
 # Function to scan for secrets in JS/JSON files
 def secret_finding(url, target):
@@ -138,19 +109,18 @@ def save_secrets(url, secrets, target):
 
 # Main function
 def main(target, threads, rate_limit):
-    scan_subdomains(target)
     urls = scan_urls(target)
     if not urls:
         print("[-] No URLs found.")
         return
 
-    print(f"[*] Extracting JavaScript & JSON files...")
-    js_json_files = extract_js_json(urls, target)
-    print(f"[+] Found {len(js_json_files)} JavaScript/JSON files.")
+    print(f"[*] Extracting sensitive files (JS, JSON, ZIP, TAR, DB, BAK)...")
+    sensitive_files = extract_sensitive_files(urls, target)
+    print(f"[+] Found {len(sensitive_files)} sensitive files.")
 
     print(f"[*] Scanning for sensitive data...")
     with ThreadPoolExecutor(max_workers=threads) as executor:
-        for _ in executor.map(lambda url: secret_finding(url, target), js_json_files):
+        for _ in executor.map(lambda url: secret_finding(url, target), sensitive_files):
             time.sleep(rate_limit)
 
     print("[+] Scan complete.")
